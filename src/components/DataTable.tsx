@@ -1,164 +1,332 @@
-import React, { useState, useEffect } from 'react';
-import { Table, Input, Button, Card, Drawer, Form, InputNumber, Select } from 'antd';
-import type { TableProps } from 'antd';
-import { Filter, Search } from 'lucide-react';
-import axios from 'axios';
-import { TableData, FilterParams } from '../types/data';
+import React, { useState, useEffect } from "react";
+import {
+  Table,
+  Input,
+  Button,
+  Card,
+  Drawer,
+  Form,
+  InputNumber,
+  Select,
+} from "antd";
+import type { TableProps } from "antd";
+import { Filter, Search } from "lucide-react";
+import axios from "axios";
+import { useSearchParams } from "react-router-dom";
 
-const { Option } = Select;
+interface TableData {
+  [key: string]: any;
+}
+
+interface FilterParams {
+  [key: string]: any;
+}
+
+const removeDuplicateDomains = (data: TableData[]) => {
+  const uniqueDomains = new Map();
+
+  // Keep only the first occurrence of each domain
+  return data.filter((item) => {
+    if (item.domain && !uniqueDomains.has(item.domain)) {
+      uniqueDomains.set(item.domain, true);
+      return true;
+    }
+    return false;
+  });
+};
 
 const DataTable: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const [data, setData] = useState<TableData[]>([]);
+  const [allData, setAllData] = useState<TableData[]>([]);
+  const [filteredData, setFilteredData] = useState<TableData[]>([]);
+  const [columns, setColumns] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [searchText, setSearchText] = useState('');
   const [filterDrawerVisible, setFilterDrawerVisible] = useState(false);
   const [filters, setFilters] = useState<FilterParams>({});
+  const [searchText, setSearchText] = useState("");
+  const [sortInfo, setSortInfo] = useState<{
+    field: string;
+    order: "ascend" | "descend" | undefined;
+  }>({
+    field: "",
+    order: undefined,
+  });
   const [pagination, setPagination] = useState({
-    current: 1,
-    pageSize: 20,
+    current: Number(searchParams.get("page")) || 1,
+    pageSize: Number(searchParams.get("pageSize")) || 20,
     total: 0,
   });
 
-  const fetchData = async (
-    page: number,
-    pageSize: number,
-    sorter?: TableProps<TableData>['sortOrder'],
-    filters?: FilterParams
+  // Extract unique values for filter options
+  const getUniqueValues = (field: string) => {
+    return [...new Set(allData.map((item) => item[field]))].filter(Boolean);
+  };
+
+  // Parse URL search parameters
+  useEffect(() => {
+    const newFilters: FilterParams = {};
+    const newPagination = { ...pagination };
+
+    // Parse filters and other params from URL
+    searchParams.forEach((value, key) => {
+      if (key === "sortField") {
+        setSortInfo((prev) => ({ ...prev, field: value }));
+      } else if (key === "sortOrder") {
+        setSortInfo((prev) => ({
+          ...prev,
+          order: value as "ascend" | "descend",
+        }));
+      } else if (key === "page") {
+        newPagination.current = Number(value);
+      } else if (key === "pageSize") {
+        newPagination.pageSize = Number(value);
+      } else if (key === "searchText") {
+        setSearchText(value);
+      } else {
+        newFilters[key] = value;
+      }
+    });
+
+    setFilters(newFilters);
+    setPagination(newPagination);
+  }, [searchParams]);
+
+  const updateURL = (
+    newFilters: FilterParams,
+    newPagination: typeof pagination,
+    newSearchText?: string,
+    newSortInfo?: typeof sortInfo
   ) => {
+    const params = new URLSearchParams(searchParams);
+
+    // Update pagination params
+    params.set("page", newPagination.current.toString());
+    params.set("pageSize", newPagination.pageSize.toString());
+
+    // Update filters
+    Object.entries(newFilters).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        params.set(key, value.toString());
+      } else {
+        params.delete(key);
+      }
+    });
+
+    // Update search text
+    if (newSearchText) {
+      params.set("searchText", newSearchText);
+    } else {
+      params.delete("searchText");
+    }
+
+    // Update sort information
+    if (newSortInfo?.field) {
+      params.set("sortField", newSortInfo.field);
+      if (newSortInfo.order) {
+        params.set("sortOrder", newSortInfo.order);
+      } else {
+        params.delete("sortOrder");
+      }
+    } else {
+      params.delete("sortField");
+      params.delete("sortOrder");
+    }
+
+    setSearchParams(params);
+  };
+
+  const applyDataTransformations = (sourceData: TableData[]) => {
+    let result = [...sourceData];
+
+    // Apply filters
+    if (Object.keys(filters).length > 0) {
+      result = result.filter((item) => {
+        return Object.keys(filters).every((key) => {
+          if (!filters[key]) return true;
+          if (typeof item[key] === "number") {
+            if (key.includes("min")) {
+              return item[key.replace("min", "")] >= filters[key];
+            }
+            if (key.includes("max")) {
+              return item[key.replace("max", "")] <= filters[key];
+            }
+            return item[key] === filters[key];
+          }
+          return item[key]
+            ?.toString()
+            .toLowerCase()
+            .includes(filters[key].toLowerCase());
+        });
+      });
+    }
+
+    // Apply search
+    if (searchText) {
+      result = result.filter((item) =>
+        item.domain.toLowerCase().includes(searchText.toLowerCase())
+      );
+    }
+
+    // Apply sorting
+    if (sortInfo.field && sortInfo.order) {
+      result.sort((a, b) => {
+        const aVal = a[sortInfo.field];
+        const bVal = b[sortInfo.field];
+        const modifier = sortInfo.order === "ascend" ? 1 : -1;
+
+        if (typeof aVal === "string") {
+          return aVal.localeCompare(bVal) * modifier;
+        }
+        return (aVal - bVal) * modifier;
+      });
+    }
+
+    setFilteredData(result);
+    return result;
+  };
+
+  const fetchData = async () => {
     setLoading(true);
     try {
       const response = await axios.get(
-        'https://docs.google.com/spreadsheets/d/1vwc803C8MwWBMc7ntCre3zJ5xZtG881HKkxlIrwwxNs/gviz/tq?sheet=Sheet1&range=A1:I36592'
+        "https://docs.google.com/spreadsheets/d/1vwc803C8MwWBMc7ntCre3zJ5xZtG881HKkxlIrwwxNs/gviz/tq?sheet=Sheet1&range=A1:I36592"
       );
-      
-      // Extract the JSON from the response (remove the callback wrapper)
+
       const jsonStr = response.data.substring(
-        response.data.indexOf('{'),
-        response.data.lastIndexOf('}') + 1
+        response.data.indexOf("{"),
+        response.data.lastIndexOf("}") + 1
       );
       const jsonData = JSON.parse(jsonStr);
 
+      // Create columns dynamically
+      const dynamicColumns = jsonData.table.cols.map((col: any) => {
+        const column: any = {
+          title: col.label,
+          dataIndex: col.label.toLowerCase().replace(/\s+/g, ""),
+          sorter: true,
+        };
+
+        if (col.pattern === '"$"#,##0.00') {
+          column.render = (value: number) => `$${value?.toFixed(2)}`;
+        } else if (col.pattern === "0%") {
+          column.render = (value: number) => `${(value * 100)?.toFixed(0)}%`;
+        } else if (col.type === "number") {
+          column.render = (value: number) => value?.toLocaleString() || 0;
+        }
+
+        return column;
+      });
+
+      setColumns(dynamicColumns);
+
       // Transform the data
-      let transformedData: TableData[] = jsonData.table.rows.map((row: any) => ({
-        domain: row.c[0]?.v || '',
-        niche1: row.c[1]?.v || '',
-        niche2: row.c[2]?.v || '',
-        traffic: row.c[3]?.v || 0,
-        dr: row.c[4]?.v || 0,
-        da: row.c[5]?.v || 0,
-        language: row.c[6]?.v || '',
-        price: row.c[7]?.v || 0,
-        spamScore: row.c[8]?.v || 0,
-      }));
-
-      // Apply filters
-      if (filters) {
-        transformedData = transformedData.filter((item) => {
-          let match = true;
-          if (filters.domain) {
-            match = match && item.domain.toLowerCase().includes(filters.domain.toLowerCase());
-          }
-          if (filters.niche1) {
-            match = match && item.niche1 === filters.niche1;
-          }
-          if (filters.language) {
-            match = match && item.language === filters.language;
-          }
-          if (filters.trafficMin !== undefined) {
-            match = match && item.traffic >= filters.trafficMin;
-          }
-          if (filters.trafficMax !== undefined) {
-            match = match && item.traffic <= filters.trafficMax;
-          }
-          // Add other filter conditions as needed
-          return match;
+      let transformedData: TableData[] = jsonData.table.rows.map((row: any) => {
+        const rowData: TableData = {};
+        jsonData.table.cols.forEach((col: any, index: number) => {
+          const key = col.label.toLowerCase().replace(/\s+/g, "");
+          rowData[key] = row.c[index]?.v ?? null;
         });
-      }
+        return rowData;
+      });
 
-      // Apply search
-      if (searchText) {
-        transformedData = transformedData.filter(item =>
-          item.domain.toLowerCase().includes(searchText.toLowerCase())
-        );
-      }
+      // Remove duplicate domains
+      transformedData = removeDuplicateDomains(transformedData);
 
-      // Calculate pagination
-      const total = transformedData.length;
-      const start = (page - 1) * pageSize;
-      const paginatedData = transformedData.slice(start, start + pageSize);
+      console.log(
+        `Removed ${
+          jsonData.table.rows.length - transformedData.length
+        } duplicate domains`
+      );
+
+      setAllData(transformedData);
+
+      // Apply transformations and update filtered data
+      const processedData = applyDataTransformations(transformedData);
+
+      // Update pagination
+      const total = processedData.length;
+      const start = (pagination.current - 1) * pagination.pageSize;
+      const paginatedData = processedData.slice(
+        start,
+        start + pagination.pageSize
+      );
 
       setData(paginatedData);
-      setPagination({
-        ...pagination,
+      setPagination((prev) => ({
+        ...prev,
         total,
-      });
+      }));
     } catch (error) {
-      console.error('Error fetching data:', error);
+      console.error("Error fetching data:", error);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchData(pagination.current, pagination.pageSize, undefined, filters);
-  }, [searchText, filters]);
+    if (allData.length > 0) {
+      const processedData = applyDataTransformations(allData);
+      const start = (pagination.current - 1) * pagination.pageSize;
+      const paginatedData = processedData.slice(
+        start,
+        start + pagination.pageSize
+      );
 
-  const columns = [
-    {
-      title: 'Domain',
-      dataIndex: 'domain',
-      sorter: (a: TableData, b: TableData) => a.domain.localeCompare(b.domain),
-    },
-    {
-      title: 'Niche 1',
-      dataIndex: 'niche1',
-      sorter: (a: TableData, b: TableData) => a.niche1.localeCompare(b.niche1),
-    },
-    {
-      title: 'Niche 2',
-      dataIndex: 'niche2',
-      sorter: (a: TableData, b: TableData) => a.niche2.localeCompare(b.niche2),
-    },
-    {
-      title: 'Traffic',
-      dataIndex: 'traffic',
-      sorter: (a: TableData, b: TableData) => a.traffic - b.traffic,
-    },
-    {
-      title: 'DR',
-      dataIndex: 'dr',
-      sorter: (a: TableData, b: TableData) => a.dr - b.dr,
-    },
-    {
-      title: 'DA',
-      dataIndex: 'da',
-      sorter: (a: TableData, b: TableData) => a.da - b.da,
-    },
-    {
-      title: 'Language',
-      dataIndex: 'language',
-      sorter: (a: TableData, b: TableData) => a.language.localeCompare(b.language),
-    },
-    {
-      title: 'Price',
-      dataIndex: 'price',
-      render: (price: number) => `$${price.toFixed(2)}`,
-      sorter: (a: TableData, b: TableData) => a.price - b.price,
-    },
-    {
-      title: 'Spam Score',
-      dataIndex: 'spamScore',
-      render: (score: number) => `${(score * 100).toFixed(0)}%`,
-      sorter: (a: TableData, b: TableData) => a.spamScore - b.spamScore,
-    },
-  ];
+      setData(paginatedData);
+      setPagination((prev) => ({
+        ...prev,
+        total: processedData.length,
+      }));
+    }
+  }, [searchText, filters, pagination.current, pagination.pageSize, sortInfo]);
 
-  const handleTableChange: TableProps<TableData>['onChange'] = (
-    pagination,
-    filters,
-    sorter
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const handleTableChange: TableProps<TableData>["onChange"] = (
+    newPagination,
+    _,
+    sorter: any
   ) => {
-    fetchData(pagination.current!, pagination.pageSize!, sorter, filters as any);
+    const newSortInfo = {
+      field: sorter.field,
+      order: sorter.order,
+    };
+
+    setPagination({
+      ...pagination,
+      current: newPagination.current || 1,
+      pageSize: newPagination.pageSize || 20,
+    });
+
+    setSortInfo(newSortInfo);
+
+    updateURL(
+      filters,
+      {
+        ...pagination,
+        current: newPagination.current || 1,
+        pageSize: newPagination.pageSize || 20,
+      },
+      searchText,
+      newSortInfo
+    );
+  };
+
+  const handleSearch = (value: string) => {
+    setSearchText(value);
+    setPagination((prev) => ({ ...prev, current: 1 }));
+    updateURL(filters, { ...pagination, current: 1 }, value);
+  };
+
+  const handleFiltersSubmit = (values: FilterParams) => {
+    setFilters(values);
+    setPagination((prev) => ({ ...prev, current: 1 }));
+    updateURL(values, { ...pagination, current: 1 }, searchText);
+    setFilterDrawerVisible(false);
   };
 
   return (
@@ -170,7 +338,7 @@ const DataTable: React.FC = () => {
               placeholder="Search by domain name..."
               prefix={<Search className="h-5 w-5 text-gray-400" />}
               value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
+              onChange={(e) => handleSearch(e.target.value)}
             />
           </div>
           <Button
@@ -187,7 +355,11 @@ const DataTable: React.FC = () => {
           columns={columns}
           dataSource={data}
           rowKey="domain"
-          pagination={pagination}
+          pagination={{
+            ...pagination,
+            showSizeChanger: true,
+            showQuickJumper: true,
+          }}
           onChange={handleTableChange}
           loading={loading}
           scroll={{ x: true }}
@@ -201,34 +373,40 @@ const DataTable: React.FC = () => {
         visible={filterDrawerVisible}
         width={320}
       >
-        <Form layout="vertical" onFinish={(values) => {
-          setFilters(values);
-          setFilterDrawerVisible(false);
-        }}>
-          <Form.Item name="niche1" label="Niche 1">
-            <Select allowClear>
-              <Option value="Business">Business</Option>
-              <Option value="Technology">Technology</Option>
-              <Option value="Health">Health</Option>
-              {/* Add more options based on your data */}
-            </Select>
-          </Form.Item>
-
-          <Form.Item name="language" label="Language">
-            <Select allowClear>
-              <Option value="English">English</Option>
-              <Option value="Spanish">Spanish</Option>
-              {/* Add more languages */}
-            </Select>
-          </Form.Item>
+        <Form
+          layout="vertical"
+          onFinish={handleFiltersSubmit}
+          initialValues={filters}
+        >
+          {columns.map((column) => {
+            const fieldName = column.dataIndex;
+            if (["niche1", "language"].includes(fieldName)) {
+              return (
+                <Form.Item
+                  key={fieldName}
+                  name={fieldName}
+                  label={column.title}
+                >
+                  <Select allowClear>
+                    {getUniqueValues(fieldName).map((value) => (
+                      <Select.Option key={value} value={value}>
+                        {value}
+                      </Select.Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              );
+            }
+            return null;
+          })}
 
           <Form.Item label="Traffic Range">
             <Input.Group compact>
               <Form.Item name="trafficMin" noStyle>
-                <InputNumber placeholder="Min" style={{ width: '50%' }} />
+                <InputNumber placeholder="Min" style={{ width: "50%" }} />
               </Form.Item>
               <Form.Item name="trafficMax" noStyle>
-                <InputNumber placeholder="Max" style={{ width: '50%' }} />
+                <InputNumber placeholder="Max" style={{ width: "50%" }} />
               </Form.Item>
             </Input.Group>
           </Form.Item>
@@ -238,14 +416,14 @@ const DataTable: React.FC = () => {
               <Form.Item name="priceMin" noStyle>
                 <InputNumber
                   placeholder="Min"
-                  style={{ width: '50%' }}
+                  style={{ width: "50%" }}
                   prefix="$"
                 />
               </Form.Item>
               <Form.Item name="priceMax" noStyle>
                 <InputNumber
                   placeholder="Max"
-                  style={{ width: '50%' }}
+                  style={{ width: "50%" }}
                   prefix="$"
                 />
               </Form.Item>
@@ -253,10 +431,14 @@ const DataTable: React.FC = () => {
           </Form.Item>
 
           <div className="flex gap-2">
-            <Button onClick={() => {
-              setFilters({});
-              setFilterDrawerVisible(false);
-            }}>
+            <Button
+              onClick={() => {
+                setFilters({});
+                setPagination((prev) => ({ ...prev, current: 1 }));
+                updateURL({}, { ...pagination, current: 1 }, "");
+                setFilterDrawerVisible(false);
+              }}
+            >
               Reset
             </Button>
             <Button type="primary" htmlType="submit" className="bg-blue-600">
