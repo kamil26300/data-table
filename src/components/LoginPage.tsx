@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, Form, Input, Button, message } from 'antd';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { Lock, User } from 'lucide-react';
 
 const LoginPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const login = useAuthStore((state) => state.login);
   const [loading, setLoading] = useState(false);
 
@@ -15,7 +16,10 @@ const LoginPage: React.FC = () => {
       const success = login(values.username, values.password);
       if (success) {
         message.success('Login successful!');
-        navigate('/dashboard');
+        // Get the search params from the current URL
+        const currentSearch = location.search;
+        // If there are search params, append them to the dashboard URL
+        navigate(`/dashboard${currentSearch}`);
       } else {
         message.error('Invalid credentials!');
       }
