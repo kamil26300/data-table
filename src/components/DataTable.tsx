@@ -24,8 +24,6 @@ interface FilterParams {
 
 const removeDuplicateDomains = (data: TableData[]) => {
   const uniqueDomains = new Map();
-
-  // Keep only the first occurrence of each domain
   return data.filter((item) => {
     if (item.domain && !uniqueDomains.has(item.domain)) {
       uniqueDomains.set(item.domain, true);
@@ -37,10 +35,10 @@ const removeDuplicateDomains = (data: TableData[]) => {
 
 const DataTable: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const [form] = Form.useForm();
 
   const [data, setData] = useState<TableData[]>([]);
   const [allData, setAllData] = useState<TableData[]>([]);
-  const [filteredData, setFilteredData] = useState<TableData[]>([]);
   const [columns, setColumns] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [filterDrawerVisible, setFilterDrawerVisible] = useState(false);
@@ -54,44 +52,61 @@ const DataTable: React.FC = () => {
     order: undefined,
   });
   const [pagination, setPagination] = useState({
-    current: Number(searchParams.get("page")) || 1,
-    pageSize: Number(searchParams.get("pageSize")) || 20,
+    current: 1,
+    pageSize: 20,
     total: 0,
   });
 
-  // Extract unique values for filter options
-  const getUniqueValues = (field: string) => {
-    return [...new Set(allData.map((item) => item[field]))].filter(Boolean);
-  };
-
-  // Parse URL search parameters
-  useEffect(() => {
+  // Initialize states from URL parameters
+  const initializeFromURL = () => {
     const newFilters: FilterParams = {};
-    const newPagination = { ...pagination };
+    const newPagination = {
+      current: 1,
+      pageSize: 20,
+      total: 0,
+    };
+    const newSortInfo = {
+      field: "",
+      order: undefined as "ascend" | "descend" | undefined,
+    };
+    let newSearchText = "";
 
-    // Parse filters and other params from URL
     searchParams.forEach((value, key) => {
-      if (key === "sortField") {
-        setSortInfo((prev) => ({ ...prev, field: value }));
-      } else if (key === "sortOrder") {
-        setSortInfo((prev) => ({
-          ...prev,
-          order: value as "ascend" | "descend",
-        }));
-      } else if (key === "page") {
-        newPagination.current = Number(value);
-      } else if (key === "pageSize") {
-        newPagination.pageSize = Number(value);
-      } else if (key === "searchText") {
-        setSearchText(value);
-      } else {
-        newFilters[key] = value;
+      switch (key) {
+        case "sortField":
+          newSortInfo.field = value;
+          break;
+        case "sortOrder":
+          newSortInfo.order = value as "ascend" | "descend";
+          break;
+        case "page":
+          newPagination.current = Number(value);
+          break;
+        case "pageSize":
+          newPagination.pageSize = Number(value);
+          break;
+        case "searchText":
+          newSearchText = value;
+          break;
+        default:
+          if (value) {
+            newFilters[key] = value;
+          }
       }
     });
 
     setFilters(newFilters);
     setPagination(newPagination);
-  }, [searchParams]);
+    setSortInfo(newSortInfo);
+    setSearchText(newSearchText);
+    form.setFieldsValue(newFilters);
+
+    return { newFilters, newPagination, newSortInfo, newSearchText };
+  };
+
+  const getUniqueValues = (field: string) => {
+    return [...new Set(allData.map((item) => item[field]))].filter(Boolean);
+  };
 
   const updateURL = (
     newFilters: FilterParams,
@@ -99,7 +114,7 @@ const DataTable: React.FC = () => {
     newSearchText?: string,
     newSortInfo?: typeof sortInfo
   ) => {
-    const params = new URLSearchParams(searchParams);
+    const params = new URLSearchParams();
 
     // Update pagination params
     params.set("page", newPagination.current.toString());
@@ -109,16 +124,12 @@ const DataTable: React.FC = () => {
     Object.entries(newFilters).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== "") {
         params.set(key, value.toString());
-      } else {
-        params.delete(key);
       }
     });
 
     // Update search text
     if (newSearchText) {
       params.set("searchText", newSearchText);
-    } else {
-      params.delete("searchText");
     }
 
     // Update sort information
@@ -126,55 +137,55 @@ const DataTable: React.FC = () => {
       params.set("sortField", newSortInfo.field);
       if (newSortInfo.order) {
         params.set("sortOrder", newSortInfo.order);
-      } else {
-        params.delete("sortOrder");
       }
-    } else {
-      params.delete("sortField");
-      params.delete("sortOrder");
     }
 
     setSearchParams(params);
   };
 
-  const applyDataTransformations = (sourceData: TableData[]) => {
+  const applyDataTransformations = (
+    sourceData: TableData[],
+    currentFilters: FilterParams,
+    currentSearchText: string,
+    currentSortInfo: typeof sortInfo
+  ) => {
     let result = [...sourceData];
 
     // Apply filters
-    if (Object.keys(filters).length > 0) {
+    if (Object.keys(currentFilters).length > 0) {
       result = result.filter((item) => {
-        return Object.keys(filters).every((key) => {
-          if (!filters[key]) return true;
+        return Object.keys(currentFilters).every((key) => {
+          if (!currentFilters[key]) return true;
           if (typeof item[key] === "number") {
             if (key.includes("min")) {
-              return item[key.replace("min", "")] >= filters[key];
+              return item[key.replace("min", "")] >= currentFilters[key];
             }
             if (key.includes("max")) {
-              return item[key.replace("max", "")] <= filters[key];
+              return item[key.replace("max", "")] <= currentFilters[key];
             }
-            return item[key] === filters[key];
+            return item[key] === currentFilters[key];
           }
           return item[key]
             ?.toString()
             .toLowerCase()
-            .includes(filters[key].toLowerCase());
+            .includes(currentFilters[key].toLowerCase());
         });
       });
     }
 
     // Apply search
-    if (searchText) {
+    if (currentSearchText) {
       result = result.filter((item) =>
-        item.domain.toLowerCase().includes(searchText.toLowerCase())
+        item.domain.toLowerCase().includes(currentSearchText.toLowerCase())
       );
     }
 
     // Apply sorting
-    if (sortInfo.field && sortInfo.order) {
+    if (currentSortInfo.field && currentSortInfo.order) {
       result.sort((a, b) => {
-        const aVal = a[sortInfo.field];
-        const bVal = b[sortInfo.field];
-        const modifier = sortInfo.order === "ascend" ? 1 : -1;
+        const aVal = a[currentSortInfo.field];
+        const bVal = b[currentSortInfo.field];
+        const modifier = currentSortInfo.order === "ascend" ? 1 : -1;
 
         if (typeof aVal === "string") {
           return aVal.localeCompare(bVal) * modifier;
@@ -183,11 +194,25 @@ const DataTable: React.FC = () => {
       });
     }
 
-    setFilteredData(result);
     return result;
   };
 
-  const fetchData = async () => {
+  // Initialize from URL and fetch data on mount
+  useEffect(() => {
+    const { newFilters, newPagination, newSortInfo, newSearchText } =
+      initializeFromURL();
+
+    // Fetch and process data after initializing states
+    fetchAndProcessData(newFilters, newSearchText, newSortInfo, newPagination);
+  }, []);
+
+  // Fetch and process data
+  const fetchAndProcessData = async (
+    currentFilters = filters,
+    currentSearchText = searchText,
+    currentSortInfo = sortInfo,
+    currentPagination = pagination
+  ) => {
     setLoading(true);
     try {
       const response = await axios.get(
@@ -200,7 +225,7 @@ const DataTable: React.FC = () => {
       );
       const jsonData = JSON.parse(jsonStr);
 
-      // Create columns dynamically
+      // Create columns
       const dynamicColumns = jsonData.table.cols.map((col: any) => {
         const column: any = {
           title: col.label,
@@ -221,7 +246,7 @@ const DataTable: React.FC = () => {
 
       setColumns(dynamicColumns);
 
-      // Transform the data
+      // Transform data
       let transformedData: TableData[] = jsonData.table.rows.map((row: any) => {
         const rowData: TableData = {};
         jsonData.table.cols.forEach((col: any, index: number) => {
@@ -231,32 +256,31 @@ const DataTable: React.FC = () => {
         return rowData;
       });
 
-      // Remove duplicate domains
       transformedData = removeDuplicateDomains(transformedData);
-
-      console.log(
-        `Removed ${
-          jsonData.table.rows.length - transformedData.length
-        } duplicate domains`
-      );
-
       setAllData(transformedData);
 
-      // Apply transformations and update filtered data
-      const processedData = applyDataTransformations(transformedData);
+      // Process data with the passed filters
+      const processedData = applyDataTransformations(
+        transformedData,
+        currentFilters,
+        currentSearchText,
+        currentSortInfo
+      );
 
-      // Update pagination
-      const total = processedData.length;
-      const start = (pagination.current - 1) * pagination.pageSize;
+      // Update pagination and data
+      const start =
+        (currentPagination.current - 1) * currentPagination.pageSize;
       const paginatedData = processedData.slice(
         start,
-        start + pagination.pageSize
+        start + currentPagination.pageSize
       );
 
       setData(paginatedData);
       setPagination((prev) => ({
         ...prev,
-        total,
+        current: currentPagination.current,
+        pageSize: currentPagination.pageSize,
+        total: processedData.length,
       }));
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -265,9 +289,15 @@ const DataTable: React.FC = () => {
     }
   };
 
+  // Process data when filters/search/sort/pagination change
   useEffect(() => {
     if (allData.length > 0) {
-      const processedData = applyDataTransformations(allData);
+      const processedData = applyDataTransformations(
+        allData,
+        filters,
+        searchText,
+        sortInfo
+      );
       const start = (pagination.current - 1) * pagination.pageSize;
       const paginatedData = processedData.slice(
         start,
@@ -280,11 +310,30 @@ const DataTable: React.FC = () => {
         total: processedData.length,
       }));
     }
-  }, [searchText, filters, pagination.current, pagination.pageSize, sortInfo]);
+  }, [filters, searchText, sortInfo, pagination.current, pagination.pageSize]);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const handleReset = () => {
+    const fields = form.getFieldsValue() as Record<string, any>;
+
+    // Set all fields to empty string
+    const emptyFields = Object.keys(fields).reduce((acc, key) => {
+      acc[key] = ""; // Set each field to an empty string
+      return acc;
+    }, {} as Record<string, any>);
+
+    // Reset fields to empty values
+    form.setFieldsValue(emptyFields);
+    setFilters({});
+    setSearchText("");
+    setSortInfo({ field: "", order: undefined });
+    setPagination({
+      current: 1,
+      pageSize: 20,
+      total: 0,
+    });
+    setSearchParams(new URLSearchParams());
+    setFilterDrawerVisible(false);
+  };
 
   const handleTableChange: TableProps<TableData>["onChange"] = (
     newPagination,
@@ -296,13 +345,12 @@ const DataTable: React.FC = () => {
       order: sorter.order,
     };
 
+    setSortInfo(newSortInfo);
     setPagination({
       ...pagination,
       current: newPagination.current || 1,
       pageSize: newPagination.pageSize || 20,
     });
-
-    setSortInfo(newSortInfo);
 
     updateURL(
       filters,
@@ -319,13 +367,13 @@ const DataTable: React.FC = () => {
   const handleSearch = (value: string) => {
     setSearchText(value);
     setPagination((prev) => ({ ...prev, current: 1 }));
-    updateURL(filters, { ...pagination, current: 1 }, value);
+    updateURL(filters, { ...pagination, current: 1 }, value, sortInfo);
   };
 
   const handleFiltersSubmit = (values: FilterParams) => {
     setFilters(values);
     setPagination((prev) => ({ ...prev, current: 1 }));
-    updateURL(values, { ...pagination, current: 1 }, searchText);
+    updateURL(values, { ...pagination, current: 1 }, searchText, sortInfo);
     setFilterDrawerVisible(false);
   };
 
@@ -358,7 +406,6 @@ const DataTable: React.FC = () => {
           pagination={{
             ...pagination,
             showSizeChanger: true,
-            showQuickJumper: true,
           }}
           onChange={handleTableChange}
           loading={loading}
@@ -370,10 +417,11 @@ const DataTable: React.FC = () => {
         title="Filter Data"
         placement="right"
         onClose={() => setFilterDrawerVisible(false)}
-        visible={filterDrawerVisible}
+        open={filterDrawerVisible}
         width={320}
       >
         <Form
+          form={form}
           layout="vertical"
           onFinish={handleFiltersSubmit}
           initialValues={filters}
@@ -431,16 +479,7 @@ const DataTable: React.FC = () => {
           </Form.Item>
 
           <div className="flex gap-2">
-            <Button
-              onClick={() => {
-                setFilters({});
-                setPagination((prev) => ({ ...prev, current: 1 }));
-                updateURL({}, { ...pagination, current: 1 }, "");
-                setFilterDrawerVisible(false);
-              }}
-            >
-              Reset
-            </Button>
+            <Button onClick={handleReset}>Reset</Button>
             <Button type="primary" htmlType="submit" className="bg-blue-600">
               Apply Filters
             </Button>
