@@ -155,20 +155,37 @@ const DataTable: React.FC = () => {
     if (Object.keys(currentFilters).length > 0) {
       result = result.filter((item) => {
         return Object.keys(currentFilters).every((key) => {
-          if (!currentFilters[key]) return true;
-          if (typeof item[key] === "number") {
-            if (key.includes("min")) {
-              return item[key.replace("min", "")] >= currentFilters[key];
-            }
-            if (key.includes("max")) {
-              return item[key.replace("max", "")] <= currentFilters[key];
-            }
-            return item[key] === currentFilters[key];
+          let filterValue = currentFilters[key];
+          if (key.includes("spamscore")) filterValue /= 100;
+          if (!filterValue) return true;
+
+          // Helper function to clean and convert the value
+          const parseNumber = (value: string) => {
+            const cleanedValue = value?.toString().replace(/[^\d.-]/g, ""); // Remove commas and spaces
+            return parseFloat(cleanedValue);
+          };
+
+          if (key.includes("Min")) {
+            const field = key.replace("Min", "");
+            const itemValue = parseNumber(item[field]);
+            return !isNaN(itemValue) && itemValue >= filterValue;
           }
+
+          if (key.includes("Max")) {
+            const field = key.replace("Max", "");
+            const itemValue = parseNumber(item[field]);
+            return !isNaN(itemValue) && itemValue <= filterValue;
+          }
+
+          if (!isNaN(parseNumber(item[key]))) {
+            const itemValue = parseNumber(item[key]);
+            return itemValue === filterValue;
+          }
+
           return item[key]
             ?.toString()
             .toLowerCase()
-            .includes(currentFilters[key].toLowerCase());
+            .includes(filterValue.toString().toLowerCase());
         });
       });
     }
@@ -428,7 +445,7 @@ const DataTable: React.FC = () => {
         >
           {columns.map((column) => {
             const fieldName = column.dataIndex;
-            if (["niche1", "language"].includes(fieldName)) {
+            if (["niche1", "niche2", "language"].includes(fieldName)) {
               return (
                 <Form.Item
                   key={fieldName}
@@ -473,6 +490,25 @@ const DataTable: React.FC = () => {
                   placeholder="Max"
                   style={{ width: "50%" }}
                   prefix="$"
+                />
+              </Form.Item>
+            </Input.Group>
+          </Form.Item>
+
+          <Form.Item label="Spam Score">
+            <Input.Group compact>
+              <Form.Item name="spamscoreMin" noStyle>
+                <InputNumber
+                  placeholder="Min"
+                  style={{ width: "50%" }}
+                  suffix="%"
+                />
+              </Form.Item>
+              <Form.Item name="spamscoreMax" noStyle>
+                <InputNumber
+                  placeholder="Max"
+                  style={{ width: "50%" }}
+                  suffix="%"
                 />
               </Form.Item>
             </Input.Group>
